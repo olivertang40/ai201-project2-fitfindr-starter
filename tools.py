@@ -231,3 +231,68 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"Fit card generation is currently unavailable. (Error: {str(e)})"
+
+
+# ── Tool 4: compare_price (stretch feature) ───────────────────────────────────
+
+def compare_price(item: dict, all_listings: list[dict]) -> dict:
+    """
+    Compare item price against other listings in the same category.
+    Pure Python — no LLM call.
+
+    Args:
+        item:         The listing dict of the item to evaluate.
+        all_listings: Full listings dataset from load_listings().
+
+    Returns:
+        A dict with keys:
+            verdict (str):          "great deal" | "fair price" |
+                                    "slightly above average" | "above average" | "unknown"
+            item_price (float):     The item's price.
+            median_price (float):   Median price of comparable items, or None.
+            comparable_count (int): Number of items used for comparison.
+            explanation (str):      One human-readable sentence summarising the verdict.
+        Never raises an exception.
+    """
+    category = item.get("category")
+    item_price = item.get("price", 0.0)
+    item_id = item.get("id")
+
+    comparables = [
+        l for l in all_listings
+        if l.get("category") == category and l.get("id") != item_id
+    ]
+
+    if not comparables:
+        return {
+            "verdict": "unknown",
+            "item_price": item_price,
+            "median_price": None,
+            "comparable_count": 0,
+            "explanation": f"No other {category} items found to compare against.",
+        }
+
+    prices = sorted(l.get("price", 0.0) for l in comparables)
+    median = prices[len(prices) // 2]
+
+    ratio = item_price / median if median > 0 else 1.0
+    if ratio <= 0.75:
+        verdict = "great deal"
+    elif ratio <= 1.0:
+        verdict = "fair price"
+    elif ratio <= 1.3:
+        verdict = "slightly above average"
+    else:
+        verdict = "above average"
+
+    return {
+        "verdict": verdict,
+        "item_price": item_price,
+        "median_price": round(median, 2),
+        "comparable_count": len(comparables),
+        "explanation": (
+            f"Among {len(comparables)} comparable {category} items, "
+            f"the median price is ${median:.2f}. "
+            f"At ${item_price:.2f}, this item is a {verdict}."
+        ),
+    }

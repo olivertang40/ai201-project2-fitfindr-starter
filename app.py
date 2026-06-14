@@ -52,11 +52,21 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
         
     # 5. Format the top listing into a readable Markdown string for the UI.
     item = session["selected_item"]
-    listing_text = (f"**{item.get('title')}**\n"
-                    f"Price: ${item.get('price'):.2f} | Size: {item.get('size')} | Platform: {item.get('platform')}\n"
-                    f"Condition: {item.get('condition')}\n\n"
-                    f"{item.get('description')}")
-    
+    pc = session.get("price_comparison") or {}
+    verdict_line = f"Price verdict: {pc.get('verdict', '—')} — {pc.get('explanation', '')}\n" if pc else ""
+
+    adjusted = session.get("search_adjusted", [])
+    adjusted_note = f"\n⚠️ Filters adjusted: {', '.join(adjusted)}.\n" if adjusted else ""
+
+    listing_text = (
+        f"{adjusted_note}"
+        f"**{item.get('title')}**\n"
+        f"Price: ${item.get('price'):.2f} | Size: {item.get('size')} | Platform: {item.get('platform')}\n"
+        f"Condition: {item.get('condition')}\n"
+        f"{verdict_line}\n"
+        f"{item.get('description')}"
+    )
+
     # Return the formatted listing, outfit suggestion, and fit card to the UI panels.
     return listing_text, session.get("outfit_suggestion", ""), session.get("fit_card", "")
 

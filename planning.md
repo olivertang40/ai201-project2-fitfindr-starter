@@ -100,9 +100,29 @@ If the `outfit` string is missing or empty, it returns a descriptive error messa
 
 ---
 
-### Additional Tools (if any)
+### Tool 4: compare_price (Stretch Feature)
 
-<!-- Copy the block above for any tools beyond the required three -->
+**What it does:**
+
+Compares the selected item's price against all other listings in the same category from the dataset to determine whether the price is a good deal, fair, or above average. Pure Python — no LLM call.
+
+**Input parameters:**
+
+- `item` (dict): The listing dictionary of the item to evaluate.
+- `all_listings` (list[dict]): The full listings dataset, passed in from `load_listings()`.
+
+**What it returns:**
+
+A dictionary with the following fields:
+- `verdict` (str): One of `"great deal"`, `"fair price"`, `"slightly above average"`, `"above average"`, or `"unknown"`.
+- `item_price` (float): The item's price.
+- `median_price` (float | None): Median price across comparable category items.
+- `comparable_count` (int): How many items were used in the comparison.
+- `explanation` (str): A one-sentence human-readable summary (e.g., "Among 14 comparable tops, the median price is $21. At $18, this item is a great deal.").
+
+**What happens if it fails or returns nothing:**
+
+If no other items exist in the same category, it returns `verdict: "unknown"` with a descriptive explanation string. Never raises an exception.
 
 ---
 
@@ -110,7 +130,16 @@ If the `outfit` string is missing or empty, it returns a descriptive error messa
 
 **How does your agent decide which tool to call next?**
 
-The agent runs a sequential, conditional workflow. It begins by extracting search parameters from the query and calling `search_listings`. It then evaluates the return value: if the returned list is empty, it halts the sequence immediately and returns an error state to the user. If items are found, it proceeds to call `suggest_outfit`. Once an outfit string is successfully generated, it triggers `create_fit_card`. It knows it is done when either all three tools have been called successfully, or an early exit condition (like no search results) is met.
+The agent runs a sequential, conditional workflow with one retry layer and one additional analysis step:
+
+1. Parse the query with regex to extract `description`, `size`, and `max_price`.
+2. Call `search_listings` with all extracted filters.
+3. **If empty and filters are set:** retry with progressively loosened constraints — first remove `size`, then remove `max_price`. Log what was adjusted in `session["search_adjusted"]`. If still empty after all retries, set `session["error"]` and halt.
+4. Select `results[0]` as the top item.
+5. Call `compare_price` on the selected item to assess deal quality. This always runs when an item is found.
+6. Call `suggest_outfit` with the item and wardrobe.
+7. Call `create_fit_card` with the outfit and item.
+8. Return the completed session.
 
 ---
 
@@ -118,7 +147,17 @@ The agent runs a sequential, conditional workflow. It begins by extracting searc
 
 **How does information from one tool get passed to the next?**
 
-The agent maintains a central `session` dictionary for each user interaction. It tracks `parsed_query`, `search_results`, `selected_item`, `outfit_suggestion`, `fit_card`, and any `error` message. When one tool finishes, its output is saved into the corresponding key in the session dict. The next tool then reads its required parameters from this shared session state (e.g., `suggest_outfit` takes the `selected_item` saved from the search step), ensuring a continuous flow without requiring the user to re-enter information.
+The agent maintains a central `session` dictionary for each user interaction. Keys added in this version:
+
+- `parsed`: extracted `description`, `size`, `max_price`
+- `search_results`: full list from `search_listings`
+- `search_adjusted`: list of strings describing any filter loosening that occurred (empty list if no retry was needed)
+- `selected_item`: `results[0]`, shared input to Tools 2, 3, and 4
+- `wardrobe`: user's wardrobe dict, input to Tool 2
+- `price_comparison`: dict returned by `compare_price`
+- `outfit_suggestion`: string from `suggest_outfit`, input to Tool 3
+- `fit_card`: final output string from `create_fit_card`
+- `error`: set on early halt, `None` on success
 
 ---
 
@@ -126,11 +165,13 @@ The agent maintains a central `session` dictionary for each user interaction. It
 
 For each tool, describe the specific failure mode you're handling and what the agent does in response.
 
-| Tool            | Failure mode                          | Agent response                                                |
-| --------------- | ------------------------------------- | ------------------------------------------------------------- |
-| search_listings | No results match the query            | Set an error in the session state and halt early.             |
-| suggest_outfit  | Wardrobe is empty                     | Generate general styling advice instead of specific pairings. |
-| create_fit_card | Outfit input is missing or incomplete | Return a descriptive error message string.                    |
+| Tool            | Failure mode                             | Agent response                                                         |
+| --------------- | ---------------------------------------- | ---------------------------------------------------------------------- |
+| search_listings | No results with filters                  | Retry: remove size filter, then price filter, then halt with message.  |
+| search_listings | No results even after all retries        | Set `session["error"]` with actionable message and halt.               |
+| compare_price   | No comparable items in same category     | Return `verdict: "unknown"` with explanation; never blocks the loop.   |
+| suggest_outfit  | Wardrobe is empty                        | Generate general styling advice instead of specific pairings.          |
+| create_fit_card | Outfit input is missing or incomplete    | Return a descriptive error message string; do not raise exception.     |
 
 ---
 
@@ -141,13 +182,22 @@ flowchart TD
     Start([User Query]) --> PL[Planning Loop]
 
     PL -->|1. Parse query| T1(search_listings)
-    T1 -->|No results returned| Err[Set Error in Session & Halt]
 
-    T1 -->|Matches found| State1[(Session: selected_item)]
-    State1 -->|2. Pass item + wardrobe| T2(suggest_outfit)
+    T1 -->|Empty + size filter set| R1[Retry: remove size]
+    R1 -->|Still empty + price set| R2[Retry: remove price]
+    R1 -->|Results found| Sel[Select top result]
+    R2 -->|Still empty| Err[Set Error & Halt]
+    R2 -->|Results found| Sel
 
+    T1 -->|Results found| Sel
+
+    Sel --> AdjLog[/Log search_adjusted/]
+    AdjLog -->|1b. item + all_listings| T4(compare_price)
+    T4 --> State4[(Session: price_comparison)]
+
+    State4 -->|2. item + wardrobe| T2(suggest_outfit)
     T2 --> State2[(Session: outfit_suggestion)]
-    State2 -->|3. Pass outfit + item| T3(create_fit_card)
+    State2 -->|3. outfit + item| T3(create_fit_card)
 
     T3 --> State3[(Session: fit_card)]
 

@@ -19,7 +19,8 @@ Usage (once implemented):
 """
 
 import re
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import search_listings, suggest_outfit, create_fit_card, compare_price
+from utils.data_loader import load_listings
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -38,7 +39,9 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "query": query,              # original user query
         "parsed": {},                # extracted description / size / max_price
         "search_results": [],        # list of matching listing dicts
-        "selected_item": None,       # top result, passed into suggest_outfit
+        "search_adjusted": [],       # filter(s) removed during retry, e.g. ["size 'M' removed"]
+        "selected_item": None,       # top result, shared by Tools 2, 3, and 4
+        "price_comparison": None,    # dict returned by compare_price (stretch)
         "wardrobe": wardrobe,        # user's wardrobe dict
         "outfit_suggestion": None,   # string returned by suggest_outfit
         "fit_card": None,            # string returned by create_fit_card
@@ -114,17 +117,40 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     description = re.sub(r'[^\w\s]', '', query).strip()
     session["parsed"] = {"description": description, "size": size, "max_price": max_price}
 
-    # Step 3: Call search_listings
+    # Step 3: Call search_listings, then retry with loosened filters if empty
     results = search_listings(description=description, size=size, max_price=max_price)
+    fallback_applied = []
+
+    # Retry 1: remove size filter
+    if not results and size is not None:
+        retry = search_listings(description=description, size=None, max_price=max_price)
+        if retry:
+            results = retry
+            fallback_applied.append(f"size filter '{size}' removed")
+
+    # Retry 2: remove price filter (size already removed above)
+    if not results and max_price is not None:
+        retry = search_listings(description=description, size=None, max_price=None)
+        if retry:
+            results = retry
+            fallback_applied.append(f"price filter '${max_price:.0f}' removed")
+
     session["search_results"] = results
+    session["search_adjusted"] = fallback_applied
 
     if not results:
-        session["error"] = "We couldn't find any secondhand items matching your search criteria. Try removing the price or size filters, or use different keywords."
+        session["error"] = (
+            "We couldn't find any secondhand items matching your search criteria. "
+            "Try different keywords, or remove size and price filters."
+        )
         return session
 
-    # Step 4: Select the item to use
+    # Step 4: Select the top result
     selected_item = results[0]
     session["selected_item"] = selected_item
+
+    # Step 4b: Compare price against comparable listings (stretch feature)
+    session["price_comparison"] = compare_price(selected_item, load_listings())
 
     # Step 5: Call suggest_outfit
     outfit = suggest_outfit(selected_item, wardrobe)
@@ -160,3 +186,16 @@ if __name__ == "__main__":
         wardrobe=get_example_wardrobe(),
     )
     print(f"Error message: {session2['error']}")
+
+    print("\n\n=== Retry fallback path: impossible size, valid description ===\n")
+    session3 = run_agent(
+        query="vintage graphic tee size ZZZZ under $30",
+        wardrobe=get_example_wardrobe(),
+    )
+    if session3["error"]:
+        print(f"Error: {session3['error']}")
+    else:
+        print(f"Found (after fallback): {session3['selected_item']['title']}")
+        print(f"Filters adjusted: {session3['search_adjusted']}")
+        pc = session3["price_comparison"]
+        print(f"Price verdict: {pc['verdict']} — {pc['explanation']}")

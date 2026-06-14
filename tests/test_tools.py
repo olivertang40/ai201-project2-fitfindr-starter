@@ -3,7 +3,8 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import pytest
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import search_listings, suggest_outfit, create_fit_card, compare_price
+from utils.data_loader import load_listings
 
 def test_search_returns_results():
     results = search_listings("vintage graphic tee", size=None, max_price=50)
@@ -52,3 +53,51 @@ def test_create_fit_card_returns_result():
     assert len(result2) > 0
     # Verify the outputs vary
     assert result1 != result2
+
+
+# ── Stretch: compare_price ────────────────────────────────────────────────────
+
+def test_compare_price_returns_expected_keys():
+    listings = load_listings()
+    result = compare_price(listings[0], listings)
+    for key in ("verdict", "item_price", "median_price", "comparable_count", "explanation"):
+        assert key in result
+
+def test_compare_price_verdict_cheap_item():
+    # Construct a fake item priced far below any real category median
+    listings = load_listings()
+    cheap_item = {"id": "fake-001", "category": "tops", "price": 1.0}
+    result = compare_price(cheap_item, listings)
+    assert result["verdict"] == "great deal"
+
+def test_compare_price_verdict_expensive_item():
+    listings = load_listings()
+    expensive_item = {"id": "fake-002", "category": "tops", "price": 999.0}
+    result = compare_price(expensive_item, listings)
+    assert result["verdict"] == "above average"
+
+def test_compare_price_no_comparables():
+    # Category with no other items in the dataset
+    listings = load_listings()
+    unknown_item = {"id": "fake-003", "category": "hats", "price": 20.0}
+    result = compare_price(unknown_item, listings)
+    assert result["verdict"] == "unknown"
+    assert result["comparable_count"] == 0
+
+def test_agent_retry_removes_size_filter():
+    from agent import run_agent
+    from utils.data_loader import get_example_wardrobe
+    # Size "ZZZZ" doesn't exist — agent should retry without it and still find results
+    session = run_agent("vintage graphic tee size ZZZZ under 50", get_example_wardrobe())
+    assert session["error"] is None
+    assert session["selected_item"] is not None
+    assert any("size" in adj for adj in session["search_adjusted"])
+
+def test_agent_price_comparison_populated():
+    from agent import run_agent
+    from utils.data_loader import get_example_wardrobe
+    session = run_agent("vintage graphic tee under 50", get_example_wardrobe())
+    assert session["error"] is None
+    pc = session["price_comparison"]
+    assert pc is not None
+    assert pc["verdict"] in ("great deal", "fair price", "slightly above average", "above average", "unknown")
