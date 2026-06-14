@@ -18,3 +18,4 @@ env/
 # Local Claude Code tooling — not part of project submission
 .claude/
 PROJECT_WORKFLOW.md
+DEMO_SCRIPT.md
