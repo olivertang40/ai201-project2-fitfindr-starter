@@ -136,33 +136,34 @@ For each tool, describe the specific failure mode you're handling and what the a
 
 ## Architecture
 
-<!-- Draw a diagram of your agent showing how the components connect:
-     User input → Planning Loop → Tools (search_listings, suggest_outfit, create_fit_card)
-                                                                          ↕
-                                                                   State / Session
-     Show what triggers each tool, how state flows between them, and where error paths branch off.
-     ASCII art, a Mermaid diagram (https://mermaid.js.org/syntax/flowchart.html), or an embedded
-     sketch are all fine. You'll share this diagram with an AI tool when asking it to implement
-     the planning loop and each individual tool. -->
+```mermaid
+flowchart TD
+    Start([User Query]) --> PL[Planning Loop]
+
+    PL -->|1. Parse query| T1(search_listings)
+    T1 -->|No results returned| Err[Set Error in Session & Halt]
+
+    T1 -->|Matches found| State1[(Session: selected_item)]
+    State1 -->|2. Pass item + wardrobe| T2(suggest_outfit)
+
+    T2 --> State2[(Session: outfit_suggestion)]
+    State2 -->|3. Pass outfit + item| T3(create_fit_card)
+
+    T3 --> State3[(Session: fit_card)]
+
+    Err --> End([Return Session])
+    State3 --> End([Return Session])
+```
 
 ---
 
 ## AI Tool Plan
 
-<!-- For each part of the implementation below, describe:
-     - Which AI tool you plan to use (Claude, Copilot, ChatGPT, etc.)
-     - What you'll give it as input (which sections of this planning.md, your agent diagram)
-     - What you expect it to produce
-     - How you'll verify the output matches your spec before moving on
-
-     "I'll use AI to help me code" is not a plan.
-     "I'll give Claude my Tool 1 spec (inputs, return value, failure mode) and ask it to implement
-     search_listings() using load_listings() from the data loader — then test it against 3 queries
-     before trusting it" is a plan. -->
-
 **Milestone 3 — Individual tool implementations:**
+I will use Gemini Code Assist. I will provide it with the "Tools" and "Error Handling" sections from this `planning.md`, along with the `listings.json` schema. I expect it to generate Python functions with proper typing, list filtering logic, and `try/except` blocks for the Groq API calls. Before moving on, I will verify the output by running a quick Python script that calls each tool in isolation (e.g., passing an empty wardrobe to ensure it doesn't crash).
 
 **Milestone 4 — Planning loop and state management:**
+I will use Gemini Code Assist. I will feed it the "Planning Loop", "State Management", and the Mermaid "Architecture" diagram from this document. I expect it to implement the `run_agent()` function in `agent.py`, complete with Regex parsing for the parameters, tool sequencing, state saving to the `session` dictionary, and the early-halt logic. I will verify it by running the `agent.py` CLI tests to confirm both the happy path and the no-results path work exactly as modeled in the diagram.
 
 ---
 
